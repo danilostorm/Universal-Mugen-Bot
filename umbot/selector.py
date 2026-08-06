@@ -34,6 +34,7 @@ SPECIAL_CHAR_NAMES = {
     "empty", "random", "randomselect", "intro", "ending", "credits",
     "gameover", "logo", "storyboard", "streamer", "scene",
 }
+TEAM_MODE_INDEX = {"single": 0, "simul": 1, "turns": 2}
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,19 @@ SDL_SPECIAL_TO_VK = {
     273: 0x26, 274: 0x28, 275: 0x27, 276: 0x25,
     277: 0x2D, 278: 0x24, 279: 0x23, 280: 0x21, 281: 0x22,
 }
+
+
+def normalize_team_settings(mode: str, size: int | str) -> tuple[str, int]:
+    normalized = str(mode).strip().casefold()
+    if normalized not in TEAM_MODE_INDEX:
+        normalized = "single"
+    if normalized == "single":
+        return normalized, 1
+    try:
+        members = int(size)
+    except (TypeError, ValueError):
+        members = 2 if normalized == "simul" else 4
+    return normalized, max(2, min(4, members))
 
 
 def sdl_key_to_vk(value: int | str, fallback: int) -> int:
@@ -262,6 +276,7 @@ def load_selection_grid(profile: GameProfile, logger: Callable[[str], None]) -> 
     section = ""
     slot_index = 0
     reported: set[str] = set()
+    known = {normalize_path_text(item).casefold() for item in profile.characters}
     for raw in read_text_safely(select_path).splitlines():
         line = strip_inline_comment(raw)
         if not line:
@@ -291,10 +306,8 @@ def load_selection_grid(profile: GameProfile, logger: Callable[[str], None]) -> 
                     reported.add(key)
                     logger(f"Personagem ignorado no seletor: {command} ({reason})")
                 continue
-        elif profile.characters:
-            known = {normalize_path_text(item).casefold() for item in profile.characters}
-            if normalize_path_text(command).casefold() not in known:
-                continue
+        elif known and normalize_path_text(command).casefold() not in known:
+            continue
 
         slots.append(SelectionSlot(current_index, command, Path(command).stem.replace("_", " ")))
 
@@ -315,7 +328,13 @@ class SelectionController:
     def is_running(self) -> bool:
         return bool(self.thread and self.thread.is_alive())
 
-    def start(self, profile: GameProfile, continuous: bool = True) -> None:
+    def start(
+        self,
+        profile: GameProfile,
+        continuous: bool = True,
+        team_mode: str = "single",
+        team_size: int = 1,
+    ) -> None:
         if self.is_running():
             raise RuntimeError("O modo seletor já está executando.")
         if os.name != "nt":
@@ -325,9 +344,13 @@ class SelectionController:
         log_path = Path(profile.game_dir) / profile.log_file
         if not log_path.exists():
             raise ValueError("O mugen.log não foi encontrado. Abra o jogo uma vez e analise novamente.")
+        normalized_mode, normalized_size = normalize_team_settings(team_mode, team_size)
         self.stop_event.clear()
         self.thread = threading.Thread(
-            target=self._run, args=(profile, continuous), daemon=True, name="selector-loop"
+            target=self._run,
+            args=(profile, continuous, normalized_mode, normalized_size),
+            daemon=True,
+            name="selector-loop",
         )
         self.thread.start()
 
@@ -335,21 +358,27 @@ class SelectionController:
         self.stop_event.set()
         self.status("Parando...")
 
-    def _run(self, profile: GameProfile, continuous: bool) -> None:
+    def _run(
+        self,
+        profile: GameProfile,
+        continuous: bool,
+        team_mode: str,
+        team_size: int,
+    ) -> None:
         try:
             exe = Path(profile.executable)
             self.hwnd = self._find_game_window(exe.name)
             if not self.hwnd:
                 self.log(
                     f"Jogo aberto não encontrado: {exe.name}. Abra o jogo manualmente, "
-                    "entre em WATCH MODE e deixe na grade de personagens."
+                    "entre em WATCH MODE e deixe na primeira tela TEAM MODE."
                 )
                 return
             log_path = Path(profile.game_dir) / profile.log_file
             if self._current_log_state(log_path) != "character_select":
                 self.log(
-                    "O jogo foi encontrado, mas não está na grade de personagens. "
-                    "Entre em WATCH MODE, avance até aparecerem os retratos e não mova os cursores."
+                    "O jogo foi encontrado, mas não está no seletor. Entre em WATCH MODE, "
+                    "deixe na primeira tela TEAM MODE e não confirme nenhuma opção manualmente."
                 )
                 return
 
@@ -362,43 +391,71 @@ class SelectionController:
                 )
             else:
                 self.log("Não foi possível mapear a grade; usando movimentação aleatória com confirmação pelo log.")
-            self.log("Tela de seleção detectada. O bot assumirá os controles P1 e P2.")
+            self.log(
+                f"Modo de equipe selecionado no bot: {team_mode.upper()} "
+                f"({team_size} personagem{'s' if team_size != 1 else ''} por lado)."
+            )
 
             while not self.stop_event.is_set():
-                self.status("Selecionando P1")
-                p1, p1_slot = self._select_player(
-                    log_path, p1_keys, team=0, grid=grid,
+                if not self._choose_team_mode(p1_keys, team_mode, team_size, "P1"):
+                    self.log("Não foi possível selecionar o modo de equipe do P1.")
+                    break
+
+                p1_names, p1_indices = self._select_team(
+                    log_path=log_path,
+                    keys=p1_keys,
+                    team=0,
+                    members=team_size,
+                    grid=grid,
                     start_index=grid.p1_start if grid else 0,
+                    label="P1",
                 )
-                if not p1:
-                    self.log("Não foi possível confirmar o personagem P1.")
+                if len(p1_names) != team_size:
+                    self.log(f"P1 incompleto: {len(p1_names)}/{team_size} personagens selecionados.")
                     break
 
-                self.status("Selecionando P2")
-                p2, _ = self._select_player(
-                    log_path, p2_keys, team=1, grid=grid,
+                if not self._choose_team_mode(p2_keys, team_mode, team_size, "P2"):
+                    self.log("Não foi possível selecionar o modo de equipe do P2.")
+                    break
+
+                p2_names, _ = self._select_team(
+                    log_path=log_path,
+                    keys=p2_keys,
+                    team=1,
+                    members=team_size,
+                    grid=grid,
                     start_index=grid.p2_start if grid else 0,
-                    excluded_index=p1_slot,
+                    label="P2",
                 )
-                if not p2 and self._current_log_state(log_path) == "character_select":
+                if len(p2_names) != team_size and self._current_log_state(log_path) == "character_select":
                     self.log("P2 não respondeu às teclas próprias; tentando os controles do P1.")
-                    p2, _ = self._select_player(
-                        log_path, p1_keys, team=1, grid=grid,
+                    p2_names, _ = self._select_team(
+                        log_path=log_path,
+                        keys=p1_keys,
+                        team=1,
+                        members=team_size,
+                        grid=grid,
                         start_index=grid.p2_start if grid else 0,
-                        excluded_index=p1_slot,
+                        label="P2",
                     )
-                if not p2:
-                    self.log("Não foi possível confirmar o personagem P2.")
+                if len(p2_names) != team_size:
+                    self.log(f"P2 incompleto: {len(p2_names)}/{team_size} personagens selecionados.")
                     break
 
-                self.status(f"{p1} VS {p2}")
+                self.status(f"{team_mode.upper()} {team_size}x{team_size} — escolhendo cenário")
                 if not self._start_selected_match(log_path, p1_keys):
                     self.log("A luta não iniciou. O jogo registrou um erro ou permaneceu no seletor.")
                     break
+
                 self.matches += 1
-                self.log(f"Luta iniciada pela tela de seleção: {p1} VS {p2}")
+                self.log(
+                    "Luta iniciada pela tela de seleção:\n"
+                    f"P1: {', '.join(p1_names)}\n"
+                    f"P2: {', '.join(p2_names)}"
+                )
                 if not continuous:
                     break
+
                 self.status(f"Luta {self.matches} em andamento")
                 if not self._wait_for_next_character_select(log_path, profile.match_timeout):
                     if not self.stop_event.is_set():
@@ -412,30 +469,95 @@ class SelectionController:
             self.hwnd = 0
             self.status("Parado")
 
+    def _choose_team_mode(
+        self,
+        keys: PlayerKeys,
+        team_mode: str,
+        team_size: int,
+        label: str,
+    ) -> bool:
+        if self.stop_event.is_set() or not self._focus_game():
+            return False
+        self.status(f"Selecionando {team_mode.upper()} para {label}")
+
+        # Force the cursor to SINGLE first; menus clamp at their first entry.
+        for _ in range(4):
+            self._tap(keys.up, 0.045)
+        for _ in range(TEAM_MODE_INDEX[team_mode]):
+            self._tap(keys.down, 0.06)
+
+        if team_mode != "single":
+            # Clamp the team size at 2, then move to the requested value.
+            for _ in range(6):
+                self._tap(keys.left, 0.04)
+            for _ in range(max(0, team_size - 2)):
+                self._tap(keys.right, 0.06)
+
+        self._tap(keys.confirm, 0.1)
+        time.sleep(0.55)
+        self.log(f"{label}: modo {team_mode.upper()} {team_size} confirmado.")
+        return True
+
+    def _select_team(
+        self,
+        log_path: Path,
+        keys: PlayerKeys,
+        team: int,
+        members: int,
+        grid: SelectionGrid | None,
+        start_index: int,
+        label: str,
+    ) -> tuple[list[str], set[int]]:
+        names: list[str] = []
+        selected_indices: set[int] = set()
+        current_index = start_index
+
+        for member_slot in range(members):
+            self.status(f"{label}: personagem {member_slot + 1}/{members}")
+            name, selected_index = self._select_player(
+                log_path=log_path,
+                keys=keys,
+                team=team,
+                member_slot=member_slot,
+                grid=grid,
+                current_index=current_index,
+                excluded_indices=selected_indices,
+            )
+            if not name:
+                break
+            names.append(name)
+            if selected_index is not None:
+                selected_indices.add(selected_index)
+                current_index = selected_index
+            self.log(f"{label} {member_slot + 1}/{members}: {name}")
+        return names, selected_indices
+
     def _select_player(
         self,
         log_path: Path,
         keys: PlayerKeys,
         team: int,
+        member_slot: int,
         grid: SelectionGrid | None,
-        start_index: int,
-        excluded_index: int | None = None,
+        current_index: int,
+        excluded_indices: set[int],
     ) -> tuple[str | None, int | None]:
         tail = LogTail(log_path)
         tail.reset_to_end()
         selected_re = re.compile(
-            rf"Selected char\s+\d+\s+on teamslot\s+{team}\.0.*?\r?\nChar\s+(.+?)\.def",
+            rf"Selected char\s+\d+\s+on teamslot\s+{team}\.{member_slot}.*?\r?\nChar\s+(.+?)\.def",
             re.IGNORECASE | re.DOTALL,
         )
         accumulated = ""
-        current_index = start_index
 
         for _ in range(24):
             if self.stop_event.is_set() or not self._focus_game():
                 return None, None
             target_index: int | None = None
             if grid:
-                candidates = [slot for slot in grid.slots if slot.index != excluded_index]
+                candidates = [slot for slot in grid.slots if slot.index not in excluded_indices]
+                if not candidates:
+                    candidates = list(grid.slots)
                 if not candidates:
                     return None, None
                 target = random.choice(candidates)
@@ -447,11 +569,11 @@ class SelectionController:
                     self._tap(random.choice((keys.up, keys.down, keys.left, keys.right)), 0.035)
             self._tap(keys.confirm, 0.08)
 
-            deadline = time.monotonic() + 2.2
+            deadline = time.monotonic() + 2.4
             while time.monotonic() < deadline and not self.stop_event.is_set():
                 chunk = tail.read_new()
                 if chunk:
-                    accumulated = (accumulated + chunk)[-12000:]
+                    accumulated = (accumulated + chunk)[-16000:]
                     match = selected_re.search(accumulated)
                     if match:
                         return match.group(1).strip().replace("_", " "), target_index
@@ -476,7 +598,7 @@ class SelectionController:
         tail.reset_to_end()
         accumulated = ""
         next_press = 0.0
-        deadline = time.monotonic() + 25.0
+        deadline = time.monotonic() + 30.0
         while time.monotonic() < deadline and not self.stop_event.is_set():
             now = time.monotonic()
             if now >= next_press:
@@ -487,7 +609,7 @@ class SelectionController:
                 next_press = now + 1.4
             chunk = tail.read_new()
             if chunk:
-                accumulated = (accumulated + chunk)[-20000:]
+                accumulated = (accumulated + chunk)[-24000:]
                 if FATAL_ERROR_RE.search(accumulated):
                     return False
                 if MATCH_START_RE.search(accumulated):
