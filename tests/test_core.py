@@ -4,7 +4,13 @@ from pathlib import Path
 
 from universal_mugen_bot import EngineDetector, GameProfile, RosterScanner
 from umbot.controller import failure_kind, stage_argument
-from umbot.selector import SelectionController, load_player_keys, sdl_key_to_vk
+from umbot.selector import (
+    SelectionController,
+    load_player_keys,
+    load_selection_grid,
+    sdl_key_to_vk,
+    validate_character_dependencies,
+)
 
 
 CHAR_DEF = """[Info]\nname = Test\ndisplayname = Test\n[Files]\ncmd = test.cmd\ncns = test.cns\nsprite = test.sff\nanim = test.air\n"""
@@ -119,6 +125,63 @@ class CoreTests(unittest.TestCase):
                 encoding="latin-1",
             )
             self.assertEqual(SelectionController._current_log_state(log), "character_select")
+
+    def test_selector_rejects_character_with_missing_cmd(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            char_dir = root / "chars" / "Eyedol"
+            char_dir.mkdir(parents=True)
+            char_def = char_dir / "MUGEN_Size.def"
+            char_def.write_text(
+                "[Info]\nname=Broken\n[Files]\ncmd=CODE/SHAOKAHN.cmd\n"
+                "cns=ok.cns\nsprite=ok.sff\nanim=ok.air\n",
+                encoding="utf-8",
+            )
+            for name in ("ok.cns", "ok.sff", "ok.air"):
+                (char_dir / name).write_bytes(b"ok")
+            profile = GameProfile(game_dir=str(root))
+            valid, reason = validate_character_dependencies(profile, char_def)
+            self.assertFalse(valid)
+            self.assertIn("SHAOKAHN.cmd", reason)
+
+    def test_selection_grid_keeps_only_usable_characters(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            data = root / "data"
+            chars = root / "chars"
+            data.mkdir()
+            (data / "system.def").write_text(
+                "[Select Info]\ncolumns=4\np1.cursor.startcell=0\np2.cursor.startcell=1\n",
+                encoding="utf-8",
+            )
+            (data / "select.def").write_text(
+                "[Characters]\ngood/good.def\nEyedol/MUGEN_Size.def\nempty\nrandomselect\n",
+                encoding="utf-8",
+            )
+            good = chars / "good"
+            broken = chars / "Eyedol"
+            good.mkdir(parents=True)
+            broken.mkdir(parents=True)
+            (good / "good.def").write_text(CHAR_DEF, encoding="utf-8")
+            for name in ("test.cmd", "test.cns", "test.sff", "test.air"):
+                (good / name).write_bytes(b"ok")
+            (broken / "MUGEN_Size.def").write_text(
+                "[Info]\nname=Broken\n[Files]\ncmd=CODE/SHAOKAHN.cmd\n"
+                "cns=ok.cns\nsprite=ok.sff\nanim=ok.air\n",
+                encoding="utf-8",
+            )
+            for name in ("ok.cns", "ok.sff", "ok.air"):
+                (broken / name).write_bytes(b"ok")
+            profile = GameProfile(
+                game_dir=str(root),
+                system_file="data/system.def",
+                select_file="data/select.def",
+                characters=["chars/good/good.def", "chars/Eyedol/MUGEN_Size.def"],
+            )
+            grid = load_selection_grid(profile, lambda _: None)
+            self.assertIsNotNone(grid)
+            self.assertEqual(grid.columns, 4)
+            self.assertEqual([(slot.index, slot.command_path) for slot in grid.slots], [(0, "chars/good/good.def")])
 
 
 if __name__ == "__main__":
