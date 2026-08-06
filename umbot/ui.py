@@ -25,13 +25,19 @@ from .core import (
     StageEntry,
 )
 from .scanner import RosterScanner
+from .selector import SelectionController
+
+
+SELECTOR_MODE = "seletor aberto (recomendado)"
+DIRECT_MODE = "linha de comando (compatibilidade)"
+
 
 class UniversalMugenBotApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title(f"{APP_NAME} v{APP_VERSION}")
-        self.root.geometry("900x680")
-        self.root.minsize(760, 580)
+        self.root.geometry("940x720")
+        self.root.minsize(790, 620)
 
         self.store = ProfileStore()
         self.profile = GameProfile()
@@ -39,6 +45,7 @@ class UniversalMugenBotApp:
         self.stages: list[StageEntry] = []
         self.events: queue.Queue[tuple[str, str]] = queue.Queue()
         self.controller = BattleController(self._thread_log, self._thread_status)
+        self.selector_controller = SelectionController(self._thread_log, self._thread_status)
         self.scan_thread: Optional[threading.Thread] = None
 
         self.folder_var = tk.StringVar()
@@ -50,6 +57,7 @@ class UniversalMugenBotApp:
         self.ai_var = tk.IntVar(value=8)
         self.delay_var = tk.DoubleVar(value=2.0)
         self.binary_var = tk.BooleanVar(value=True)
+        self.mode_var = tk.StringVar(value=SELECTOR_MODE)
         self.style_var = tk.StringVar(value="auto")
 
         self._build_ui()
@@ -83,20 +91,44 @@ class UniversalMugenBotApp:
         ttk.Spinbox(settings, from_=1, to=8, textvariable=self.ai_var, width=6).grid(row=0, column=3, padx=(5, 18))
         ttk.Label(settings, text="Intervalo:").grid(row=0, column=4, sticky="w")
         ttk.Spinbox(settings, from_=0, to=60, increment=0.5, textvariable=self.delay_var, width=7).grid(row=0, column=5, padx=(5, 18))
-        ttk.Label(settings, text="Método:").grid(row=0, column=6, sticky="w")
-        ttk.Combobox(settings, textvariable=self.style_var, values=("auto", "flags", "positional", "legacy"), state="readonly", width=12).grid(row=0, column=7, padx=(5, 0))
+        ttk.Label(settings, text="Modo:").grid(row=0, column=6, sticky="w")
+        ttk.Combobox(
+            settings,
+            textvariable=self.mode_var,
+            values=(SELECTOR_MODE, DIRECT_MODE),
+            state="readonly",
+            width=31,
+        ).grid(row=0, column=7, padx=(5, 0), sticky="w")
+
+        ttk.Label(settings, text="Método direto:").grid(row=1, column=0, sticky="w", pady=(9, 0))
+        ttk.Combobox(
+            settings,
+            textvariable=self.style_var,
+            values=("auto", "flags", "positional", "legacy"),
+            state="readonly",
+            width=12,
+        ).grid(row=1, column=1, padx=(5, 18), pady=(9, 0), sticky="w")
         ttk.Checkbutton(
             settings,
             text="Procurar personagens dentro do EXE (necessário em jogos empacotados)",
             variable=self.binary_var,
-        ).grid(row=1, column=0, columnspan=8, sticky="w", pady=(9, 0))
+        ).grid(row=1, column=2, columnspan=6, sticky="w", pady=(9, 0))
+        ttk.Label(
+            settings,
+            text=(
+                "Modo recomendado: abra o jogo manualmente, entre em WATCH MODE e deixe parado "
+                "na grade de personagens antes de clicar em iniciar."
+            ),
+            wraplength=850,
+        ).grid(row=2, column=0, columnspan=8, sticky="w", pady=(9, 0))
 
         controls = ttk.Frame(outer, padding=(0, 10))
         controls.pack(fill="x")
         self.start_button = ttk.Button(controls, text="Iniciar lutas automáticas", command=self._start_continuous)
         self.start_button.pack(side="left")
-        ttk.Button(controls, text="Testar uma luta", command=self._start_one).pack(side="left", padx=(8, 0))
-        self.stop_button = ttk.Button(controls, text="Parar", command=self._stop, state="disabled")
+        self.test_button = ttk.Button(controls, text="Selecionar uma luta", command=self._start_one)
+        self.test_button.pack(side="left", padx=(8, 0))
+        self.stop_button = ttk.Button(controls, text="Parar bot", command=self._stop, state="disabled")
         self.stop_button.pack(side="left", padx=(8, 0))
         ttk.Label(controls, textvariable=self.status_var).pack(side="right")
 
@@ -107,12 +139,15 @@ class UniversalMugenBotApp:
 
         footer = ttk.Label(
             outer,
-            text="O programa não altera chars, stages, system.def ou select.def. Ele apenas inicia e acompanha as lutas.",
+            text=(
+                "No modo seletor o jogo permanece aberto: Parar bot interrompe apenas as teclas automáticas. "
+                "Nenhum arquivo do MUGEN é alterado."
+            ),
         )
         footer.pack(fill="x", pady=(8, 0))
 
     def _choose_folder(self) -> None:
-        selected = filedialog.askdirectory(title="Escolha a pasta onde fica o executável do jogo")
+        selected = filedialog.askdirectory(title="Escolha a pasta do jogo ou a pasta-pai")
         if selected:
             self.folder_var.set(selected)
             self._scan_clicked()
@@ -140,7 +175,6 @@ class UniversalMugenBotApp:
             detected = detector.detect()
             saved = self.store.load(game_dir)
             if saved:
-                # Preserve user settings but refresh all automatically detected paths.
                 detected.rounds = saved.rounds
                 detected.ai_level = saved.ai_level
                 detected.delay_seconds = saved.delay_seconds
@@ -153,7 +187,12 @@ class UniversalMugenBotApp:
             chars, stages = scanner.scan(binary_scan=self.binary_var.get())
             detected.characters = [item.command_path for item in chars]
             detected.stages = [item.command_path for item in stages]
-            self.events.put(("scan_result", json.dumps({"profile": asdict(detected), "chars": [asdict(c) for c in chars], "stages": [asdict(s) for s in stages]}, ensure_ascii=False)))
+            payload = {
+                "profile": asdict(detected),
+                "chars": [asdict(c) for c in chars],
+                "stages": [asdict(s) for s in stages],
+            }
+            self.events.put(("scan_result", json.dumps(payload, ensure_ascii=False)))
         except Exception:
             self.events.put(("log", traceback.format_exc()))
             self.events.put(("scan_error", "Não foi possível analisar esse jogo."))
@@ -170,20 +209,25 @@ class UniversalMugenBotApp:
             return
         self._sync_profile_settings()
         try:
-            self.controller.start(
-                self.profile,
-                [c.command_path for c in self.characters],
-                [s.command_path for s in self.stages],
-                continuous=continuous,
-            )
+            if self.mode_var.get() == SELECTOR_MODE:
+                self.selector_controller.start(self.profile, continuous=continuous)
+            else:
+                self.controller.start(
+                    self.profile,
+                    [c.command_path for c in self.characters],
+                    [s.command_path for s in self.stages],
+                    continuous=continuous,
+                )
         except (ValueError, RuntimeError) as exc:
             messagebox.showerror(APP_NAME, str(exc))
             return
         self.store.save(self.profile)
         self.start_button.configure(state="disabled")
+        self.test_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
 
     def _stop(self) -> None:
+        self.selector_controller.stop()
         self.controller.stop()
 
     def _sync_profile_settings(self) -> None:
@@ -196,6 +240,7 @@ class UniversalMugenBotApp:
     def _set_buttons(self, scanning: bool = False) -> None:
         state = "disabled" if scanning else "normal"
         self.start_button.configure(state=state)
+        self.test_button.configure(state=state)
 
     def _thread_log(self, message: str) -> None:
         self.events.put(("log", message))
@@ -213,6 +258,7 @@ class UniversalMugenBotApp:
                     self.status_var.set(value)
                     if value == "Parado":
                         self.start_button.configure(state="normal")
+                        self.test_button.configure(state="normal")
                         self.stop_button.configure(state="disabled")
                 elif kind == "scan_result":
                     payload = json.loads(value)
@@ -229,8 +275,9 @@ class UniversalMugenBotApp:
                     self.style_var.set(self.profile.launch_style)
                     self.store.save(self.profile)
                     self._set_buttons(scanning=False)
-                    if len(self.characters) < 2:
-                        self._append_log("AVISO: poucos personagens foram encontrados. Faça uma luta manual para alimentar o mugen.log ou ative a varredura interna do EXE.")
+                    self._append_log(
+                        "Próximo passo: abra o jogo, entre em WATCH MODE e deixe parado na grade de personagens."
+                    )
                 elif kind == "scan_error":
                     self._set_buttons(scanning=False)
                     messagebox.showerror(APP_NAME, value)
@@ -252,14 +299,12 @@ class UniversalMugenBotApp:
         self.log_box.configure(state="disabled")
 
     def _on_close(self) -> None:
+        self.selector_controller.stop()
         self.controller.stop()
         self.root.destroy()
 
 
 def main() -> None:
-    if os.name != "nt":
-        # The UI can still open elsewhere for development/testing, but launching Windows EXEs is Windows-only.
-        pass
     root = tk.Tk()
     try:
         style = ttk.Style(root)
