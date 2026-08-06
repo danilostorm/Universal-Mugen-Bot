@@ -8,6 +8,7 @@ from umbot.selector import (
     SelectionController,
     load_player_keys,
     load_selection_grid,
+    normalize_team_settings,
     sdl_key_to_vk,
     validate_character_dependencies,
 )
@@ -182,6 +183,14 @@ class CoreTests(unittest.TestCase):
             self.assertIsNotNone(grid)
             self.assertEqual(grid.columns, 4)
             self.assertEqual([(slot.index, slot.command_path) for slot in grid.slots], [(0, "chars/good/good.def")])
+
+    def test_team_mode_normalization(self):
+        self.assertEqual(normalize_team_settings("Single", 4), ("single", 1))
+        self.assertEqual(normalize_team_settings("Simul", 2), ("simul", 2))
+        self.assertEqual(normalize_team_settings("Simul", 9), ("simul", 4))
+        self.assertEqual(normalize_team_settings("Turns", 4), ("turns", 4))
+        self.assertEqual(normalize_team_settings("Turns", 1), ("turns", 2))
+        self.assertEqual(normalize_team_settings("desconhecido", 4), ("single", 1))
 
 
 if __name__ == "__main__":
