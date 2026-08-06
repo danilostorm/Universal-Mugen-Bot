@@ -49,25 +49,24 @@ jobs:
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: UniversalMugenBot-Windows-v0.1.1
+          name: UniversalMugenBot-Windows-v0.2.0
           path: |
             dist/UniversalMugenBot.exe
             dist/UniversalMugenBot-Windows.zip
             dist/UniversalMugenBot.exe.sha256
           if-no-files-found: error
 
-      - name: Publish GitHub Release v0.1.1
+      - name: Publish GitHub Release v0.2.0
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "v0.1.1"
+          $tag = "v0.2.0"
           $assets = @(
             "dist/UniversalMugenBot.exe",
             "dist/UniversalMugenBot-Windows.zip",
             "dist/UniversalMugenBot.exe.sha256"
           )
-
           gh release view $tag --repo "${{ github.repository }}" *> $null
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag $assets --clobber --repo "${{ github.repository }}"
@@ -75,6 +74,6 @@ jobs:
             gh release create $tag $assets `
               --repo "${{ github.repository }}" `
               --target "${{ github.sha }}" `
-              --title "Universal MUGEN Bot v0.1.1" `
-              --notes "Correção da detecção: agora o bot encontra automaticamente o executável real dentro de subpastas como Game, evitando selecionar launchers pequenos na pasta-pai."
+              --title "Universal MUGEN Bot v0.2.0" `
+              --notes "Detecção universal de layout e motif; validação de personagens e stages; filtro de intro/ending; correção do prefixo stages/stages; detecção imediata de erros do MUGEN; busca em pacotes, EXE e Elecbyte.MUGEN.libs."
           }
