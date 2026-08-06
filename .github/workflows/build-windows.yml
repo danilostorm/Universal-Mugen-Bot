@@ -49,19 +49,19 @@ jobs:
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: UniversalMugenBot-Windows
+          name: UniversalMugenBot-Windows-v0.1.1
           path: |
             dist/UniversalMugenBot.exe
             dist/UniversalMugenBot-Windows.zip
             dist/UniversalMugenBot.exe.sha256
           if-no-files-found: error
 
-      - name: Publish GitHub Release v0.1.0
+      - name: Publish GitHub Release v0.1.1
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "v0.1.0"
+          $tag = "v0.1.1"
           $assets = @(
             "dist/UniversalMugenBot.exe",
             "dist/UniversalMugenBot-Windows.zip",
@@ -75,6 +75,6 @@ jobs:
             gh release create $tag $assets `
               --repo "${{ github.repository }}" `
               --target "${{ github.sha }}" `
-              --title "Universal MUGEN Bot v0.1.0" `
-              --notes "Primeira versão portátil para Windows. Detecta MUGEN, MugenHook, executáveis renomeados como MKDOTE.exe e IKEMEN GO; lê select.def e mugen.log; inicia lutas CPU vs CPU em sequência."
+              --title "Universal MUGEN Bot v0.1.1" `
+              --notes "Correção da detecção: agora o bot encontra automaticamente o executável real dentro de subpastas como Game, evitando selecionar launchers pequenos na pasta-pai."
           }
