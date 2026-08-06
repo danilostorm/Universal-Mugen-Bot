@@ -49,19 +49,19 @@ jobs:
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: UniversalMugenBot-Windows-v0.2.2
+          name: UniversalMugenBot-Windows-v0.3.0
           path: |
             dist/UniversalMugenBot.exe
             dist/UniversalMugenBot-Windows.zip
             dist/UniversalMugenBot.exe.sha256
           if-no-files-found: error
 
-      - name: Publish GitHub Release v0.2.2
+      - name: Publish GitHub Release v0.3.0
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "v0.2.2"
+          $tag = "v0.3.0"
           $assets = @(
             "dist/UniversalMugenBot.exe",
             "dist/UniversalMugenBot-Windows.zip",
@@ -74,6 +74,6 @@ jobs:
             gh release create $tag $assets `
               --repo "${{ github.repository }}" `
               --target "${{ github.sha }}" `
-              --title "Universal MUGEN Bot v0.2.2" `
-              --notes "Modo seletor como padrão: o usuário abre o MUGEN, entra em WATCH MODE e deixa na grade. O bot lê as teclas P1/P2 do mugen.cfg, mapeia a grade pelo system.def e select.def, valida dependências dos personagens e ignora entradas quebradas como DEFs que apontam para CMD/CNS/SFF/AIR ausentes. Depois seleciona P1, P2, confirma o stage e repete após cada luta."
+              --title "Universal MUGEN Bot v0.3.0" `
+              --notes "Suporte completo a Team Mode no seletor aberto. Permite escolher Single, Simul ou Turns e definir de 2 a 4 lutadores por lado. O bot seleciona o modo do P1, todos os membros do P1, o modo do P2, todos os membros do P2 e somente depois confirma o cenário. Mantém validação de personagens quebrados e seleção contínua após cada luta."
           }
