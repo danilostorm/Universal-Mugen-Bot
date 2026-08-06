@@ -25,19 +25,20 @@ from .core import (
     StageEntry,
 )
 from .scanner import RosterScanner
-from .selector import SelectionController
+from .selector import SelectionController, normalize_team_settings
 
 
 SELECTOR_MODE = "seletor aberto (recomendado)"
 DIRECT_MODE = "linha de comando (compatibilidade)"
+TEAM_MODES = ("Single", "Simul", "Turns")
 
 
 class UniversalMugenBotApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title(f"{APP_NAME} v{APP_VERSION}")
-        self.root.geometry("940x720")
-        self.root.minsize(790, 620)
+        self.root.geometry("980x750")
+        self.root.minsize(820, 650)
 
         self.store = ProfileStore()
         self.profile = GameProfile()
@@ -59,8 +60,11 @@ class UniversalMugenBotApp:
         self.binary_var = tk.BooleanVar(value=True)
         self.mode_var = tk.StringVar(value=SELECTOR_MODE)
         self.style_var = tk.StringVar(value="auto")
+        self.team_mode_var = tk.StringVar(value="Turns")
+        self.team_size_var = tk.IntVar(value=4)
 
         self._build_ui()
+        self.team_mode_var.trace_add("write", self._team_mode_changed)
         self.root.after(100, self._drain_events)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -85,13 +89,14 @@ class UniversalMugenBotApp:
 
         settings = ttk.LabelFrame(outer, text="Configurações", padding=10)
         settings.pack(fill="x")
+
         ttk.Label(settings, text="Rounds:").grid(row=0, column=0, sticky="w")
         ttk.Spinbox(settings, from_=1, to=10, textvariable=self.rounds_var, width=6).grid(row=0, column=1, padx=(5, 18))
         ttk.Label(settings, text="IA:").grid(row=0, column=2, sticky="w")
         ttk.Spinbox(settings, from_=1, to=8, textvariable=self.ai_var, width=6).grid(row=0, column=3, padx=(5, 18))
         ttk.Label(settings, text="Intervalo:").grid(row=0, column=4, sticky="w")
         ttk.Spinbox(settings, from_=0, to=60, increment=0.5, textvariable=self.delay_var, width=7).grid(row=0, column=5, padx=(5, 18))
-        ttk.Label(settings, text="Modo:").grid(row=0, column=6, sticky="w")
+        ttk.Label(settings, text="Modo do bot:").grid(row=0, column=6, sticky="w")
         ttk.Combobox(
             settings,
             textvariable=self.mode_var,
@@ -100,27 +105,46 @@ class UniversalMugenBotApp:
             width=31,
         ).grid(row=0, column=7, padx=(5, 0), sticky="w")
 
-        ttk.Label(settings, text="Método direto:").grid(row=1, column=0, sticky="w", pady=(9, 0))
+        ttk.Label(settings, text="Equipe:").grid(row=1, column=0, sticky="w", pady=(9, 0))
+        ttk.Combobox(
+            settings,
+            textvariable=self.team_mode_var,
+            values=TEAM_MODES,
+            state="readonly",
+            width=10,
+        ).grid(row=1, column=1, padx=(5, 18), pady=(9, 0), sticky="w")
+        ttk.Label(settings, text="Lutadores/lado:").grid(row=1, column=2, sticky="w", pady=(9, 0))
+        self.team_size_spin = ttk.Spinbox(
+            settings,
+            from_=1,
+            to=4,
+            textvariable=self.team_size_var,
+            width=6,
+        )
+        self.team_size_spin.grid(row=1, column=3, padx=(5, 18), pady=(9, 0), sticky="w")
+        ttk.Label(settings, text="Método direto:").grid(row=1, column=4, sticky="w", pady=(9, 0))
         ttk.Combobox(
             settings,
             textvariable=self.style_var,
             values=("auto", "flags", "positional", "legacy"),
             state="readonly",
             width=12,
-        ).grid(row=1, column=1, padx=(5, 18), pady=(9, 0), sticky="w")
+        ).grid(row=1, column=5, padx=(5, 18), pady=(9, 0), sticky="w")
         ttk.Checkbutton(
             settings,
-            text="Procurar personagens dentro do EXE (necessário em jogos empacotados)",
+            text="Procurar assets no EXE",
             variable=self.binary_var,
-        ).grid(row=1, column=2, columnspan=6, sticky="w", pady=(9, 0))
+        ).grid(row=1, column=6, columnspan=2, sticky="w", pady=(9, 0))
+
         ttk.Label(
             settings,
             text=(
                 "Modo recomendado: abra o jogo manualmente, entre em WATCH MODE e deixe parado "
-                "na grade de personagens antes de clicar em iniciar."
+                "na primeira tela TEAM MODE. O bot escolhe Single/Simul/Turns para P1 e P2, "
+                "seleciona todos os lutadores e depois confirma o cenário."
             ),
-            wraplength=850,
-        ).grid(row=2, column=0, columnspan=8, sticky="w", pady=(9, 0))
+            wraplength=900,
+        ).grid(row=2, column=0, columnspan=8, sticky="w", pady=(10, 0))
 
         controls = ttk.Frame(outer, padding=(0, 10))
         controls.pack(fill="x")
@@ -145,6 +169,12 @@ class UniversalMugenBotApp:
             ),
         )
         footer.pack(fill="x", pady=(8, 0))
+
+    def _team_mode_changed(self, *_args) -> None:
+        mode = self.team_mode_var.get().strip().casefold()
+        defaults = {"single": 1, "simul": 2, "turns": 4}
+        self.team_size_var.set(defaults.get(mode, 1))
+        self.team_size_spin.configure(state="disabled" if mode == "single" else "normal")
 
     def _choose_folder(self) -> None:
         selected = filedialog.askdirectory(title="Escolha a pasta do jogo ou a pasta-pai")
@@ -208,10 +238,24 @@ class UniversalMugenBotApp:
             messagebox.showwarning(APP_NAME, "Analise a pasta do jogo primeiro.")
             return
         self._sync_profile_settings()
+        team_mode, team_size = normalize_team_settings(
+            self.team_mode_var.get(),
+            self.team_size_var.get(),
+        )
         try:
             if self.mode_var.get() == SELECTOR_MODE:
-                self.selector_controller.start(self.profile, continuous=continuous)
+                self.selector_controller.start(
+                    self.profile,
+                    continuous=continuous,
+                    team_mode=team_mode,
+                    team_size=team_size,
+                )
             else:
+                if team_mode != "single":
+                    self._append_log(
+                        "AVISO: o modo por linha de comando permanece 1x1. "
+                        "Use o seletor aberto para Simul ou Turns."
+                    )
                 self.controller.start(
                     self.profile,
                     [c.command_path for c in self.characters],
@@ -276,7 +320,8 @@ class UniversalMugenBotApp:
                     self.store.save(self.profile)
                     self._set_buttons(scanning=False)
                     self._append_log(
-                        "Próximo passo: abra o jogo, entre em WATCH MODE e deixe parado na grade de personagens."
+                        "Próximo passo: abra o jogo, entre em WATCH MODE e deixe parado "
+                        "na primeira tela TEAM MODE, antes de escolher Single/Simul/Turns."
                     )
                 elif kind == "scan_error":
                     self._set_buttons(scanning=False)
