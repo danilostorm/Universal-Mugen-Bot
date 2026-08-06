@@ -4,10 +4,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main, master]
-    tags: ["v*"]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -37,9 +36,45 @@ jobs:
           --name UniversalMugenBot
           universal_mugen_bot.py
 
-      - name: Upload Windows executable
+      - name: Package Windows ZIP
+        shell: pwsh
+        run: Compress-Archive -Path dist/UniversalMugenBot.exe -DestinationPath dist/UniversalMugenBot-Windows.zip -Force
+
+      - name: Generate SHA-256
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash dist/UniversalMugenBot.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  UniversalMugenBot.exe" | Set-Content -Encoding ascii dist/UniversalMugenBot.exe.sha256
+
+      - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: UniversalMugenBot-Windows
-          path: dist/UniversalMugenBot.exe
+          path: |
+            dist/UniversalMugenBot.exe
+            dist/UniversalMugenBot-Windows.zip
+            dist/UniversalMugenBot.exe.sha256
           if-no-files-found: error
+
+      - name: Publish GitHub Release v0.1.0
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v0.1.0"
+          $assets = @(
+            "dist/UniversalMugenBot.exe",
+            "dist/UniversalMugenBot-Windows.zip",
+            "dist/UniversalMugenBot.exe.sha256"
+          )
+
+          gh release view $tag --repo "${{ github.repository }}" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $assets --clobber --repo "${{ github.repository }}"
+          } else {
+            gh release create $tag $assets `
+              --repo "${{ github.repository }}" `
+              --target "${{ github.sha }}" `
+              --title "Universal MUGEN Bot v0.1.0" `
+              --notes "Primeira versão portátil para Windows. Detecta MUGEN, MugenHook, executáveis renomeados como MKDOTE.exe e IKEMEN GO; lê select.def e mugen.log; inicia lutas CPU vs CPU em sequência."
+          }
