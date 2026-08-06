@@ -3,7 +3,7 @@ from umbot.detector import EngineDetector
 import umbot.ui as ui
 
 ui.EngineDetector = EngineDetector
-ui.APP_VERSION = "0.2.0"
+ui.APP_VERSION = "0.2.1"
 main = ui.main
 
 __all__ = [
