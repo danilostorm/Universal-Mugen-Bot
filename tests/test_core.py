@@ -4,6 +4,7 @@ from pathlib import Path
 
 from universal_mugen_bot import EngineDetector, GameProfile, RosterScanner
 from umbot.controller import failure_kind, stage_argument
+from umbot.selector import SelectionController, load_player_keys, sdl_key_to_vk
 
 
 CHAR_DEF = """[Info]\nname = Test\ndisplayname = Test\n[Files]\ncmd = test.cmd\ncns = test.cns\nsprite = test.sff\nanim = test.air\n"""
@@ -88,6 +89,36 @@ class CoreTests(unittest.TestCase):
             profile = EngineDetector(root, lambda _: None).detect()
             self.assertEqual(profile.system_file.replace("\\", "/"), "data/Custom/system.def")
             self.assertEqual(profile.select_file.replace("\\", "/"), "data/Custom/select.def")
+
+    def test_sdl_keycodes_are_converted_to_windows_keys(self):
+        self.assertEqual(sdl_key_to_vk(273, 0), 0x26)
+        self.assertEqual(sdl_key_to_vk(276, 0), 0x25)
+        self.assertEqual(sdl_key_to_vk(102, 0), ord("F"))
+        self.assertEqual(sdl_key_to_vk(257, 0), 0x61)
+
+    def test_selector_reads_keys_from_mugen_cfg(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            data = root / "data"
+            data.mkdir()
+            (data / "mugen.cfg").write_text(
+                "[P1 Keys]\nJump=273\nCrouch=274\nLeft=276\nRight=275\nA=102\n"
+                "[P2 Keys]\nJump=264\nCrouch=258\nLeft=260\nRight=262\nA=107\n",
+                encoding="utf-8",
+            )
+            profile = GameProfile(game_dir=str(root), config_file="data/mugen.cfg")
+            p1, p2 = load_player_keys(profile)
+            self.assertEqual((p1.up, p1.down, p1.left, p1.right, p1.confirm), (0x26, 0x28, 0x25, 0x27, ord("F")))
+            self.assertEqual((p2.up, p2.down, p2.left, p2.right, p2.confirm), (0x68, 0x62, 0x64, 0x66, ord("K")))
+
+    def test_selector_detects_character_select_as_latest_state(self):
+        with tempfile.TemporaryDirectory() as temp:
+            log = Path(temp) / "mugen.log"
+            log.write_text(
+                "Match loop init\nEnd of match loop\nEntering character select.\nCharsel init\n",
+                encoding="latin-1",
+            )
+            self.assertEqual(SelectionController._current_log_state(log), "character_select")
 
 
 if __name__ == "__main__":
