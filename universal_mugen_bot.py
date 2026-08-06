@@ -2,9 +2,8 @@ from umbot import CharacterEntry, GameProfile, RosterScanner, StageEntry
 from umbot.detector import EngineDetector
 import umbot.ui as ui
 
-# Usa o detector corrigido também dentro da interface já compilada.
 ui.EngineDetector = EngineDetector
-ui.APP_VERSION = "0.1.1"
+ui.APP_VERSION = "0.2.0"
 main = ui.main
 
 __all__ = [
