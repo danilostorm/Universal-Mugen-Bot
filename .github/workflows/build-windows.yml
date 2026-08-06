@@ -49,19 +49,19 @@ jobs:
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: UniversalMugenBot-Windows-v0.2.0
+          name: UniversalMugenBot-Windows-v0.2.1
           path: |
             dist/UniversalMugenBot.exe
             dist/UniversalMugenBot-Windows.zip
             dist/UniversalMugenBot.exe.sha256
           if-no-files-found: error
 
-      - name: Publish GitHub Release v0.2.0
+      - name: Publish GitHub Release v0.2.1
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "v0.2.0"
+          $tag = "v0.2.1"
           $assets = @(
             "dist/UniversalMugenBot.exe",
             "dist/UniversalMugenBot-Windows.zip",
@@ -74,6 +74,6 @@ jobs:
             gh release create $tag $assets `
               --repo "${{ github.repository }}" `
               --target "${{ github.sha }}" `
-              --title "Universal MUGEN Bot v0.2.0" `
-              --notes "Detecção universal de layout e motif; validação de personagens e stages; filtro de intro/ending; correção do prefixo stages/stages; detecção imediata de erros do MUGEN; busca em pacotes, EXE e Elecbyte.MUGEN.libs."
+              --title "Universal MUGEN Bot v0.2.1" `
+              --notes "Novo modo seletor recomendado: o usuário abre o MUGEN e deixa em WATCH MODE na grade de personagens; o bot detecta o jogo aberto, lê as teclas P1/P2 do mugen.cfg, escolhe os dois lutadores, confirma o stage e repete após cada luta. O modo antigo por linha de comando permanece disponível apenas para compatibilidade."
           }
