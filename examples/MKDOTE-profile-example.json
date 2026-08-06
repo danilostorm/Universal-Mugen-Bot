@@ -1,0 +1,11 @@
+{
+  "game_dir": "C:/Users/Usuario/Downloads/mkdote-v4.0.4/Game",
+  "executable": "C:/Users/Usuario/Downloads/mkdote-v4.0.4/Game/MKDOTE.exe",
+  "engine": "MUGEN 1.1 + MugenHook",
+  "log_file": "mugen.log",
+  "launch_style": "auto",
+  "rounds": 1,
+  "ai_level": 8,
+  "delay_seconds": 2.0,
+  "scan_binary": true
+}
